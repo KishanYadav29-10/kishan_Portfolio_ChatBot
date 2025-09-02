@@ -12,9 +12,8 @@ import google.generativeai as genai
 from langchain_core.prompts import PromptTemplate
 from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain.chains import RetrievalQA
-from langchain_google_genai import ChatGoogleGenerativeAI
 
 # --- Parsers ---
 from bs4 import BeautifulSoup
@@ -51,21 +50,14 @@ def read_pdf_text(pdf_path: Path) -> str:
 
 
 def read_html_text(html_path: Path) -> Tuple[str, List[dict]]:
-    """
-    Returns: (plain_text, project_cards)
-    project_cards: list of dicts with keys: title, description, href (if present)
-    """
     html = html_path.read_text(encoding="utf-8", errors="ignore")
     soup = BeautifulSoup(html, "html.parser")
 
-    # Full visible text (good baseline for RAG)
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
     plain_text = " ".join(soup.stripped_strings)
 
-    # Extract project cards from your portfolio structure
     project_cards = []
-    # common class in your markup: .apihu-port-single-service
     for card in soup.select(".apihu-port-single-service"):
         title_tag = card.select_one(".apihu-port-single-service-title")
         desc_tag = card.select_one(".apihu-port-single-service-text")
@@ -77,11 +69,7 @@ def read_html_text(html_path: Path) -> Tuple[str, List[dict]]:
 
         if title or desc:
             project_cards.append(
-                {
-                    "title": title,
-                    "description": desc,
-                    "href": href,
-                }
+                {"title": title, "description": desc, "href": href}
             )
 
     return plain_text, project_cards
@@ -91,9 +79,6 @@ def read_html_text(html_path: Path) -> Tuple[str, List[dict]]:
 # Chunking
 # -----------------------------
 def chunk_text(text: str, chunk_size: int = 900, chunk_overlap: int = 150) -> List[str]:
-    """
-    Simple, fast character-level chunker. Keeps overlap for better retrieval.
-    """
     text = text.strip()
     if not text:
         return []
@@ -102,8 +87,7 @@ def chunk_text(text: str, chunk_size: int = 900, chunk_overlap: int = 150) -> Li
     n = len(text)
     while start < n:
         end = min(start + chunk_size, n)
-        chunk = text[start:end]
-        chunks.append(chunk)
+        chunks.append(text[start:end])
         if end == n:
             break
         start = end - chunk_overlap
@@ -116,12 +100,8 @@ def chunk_text(text: str, chunk_size: int = 900, chunk_overlap: int = 150) -> Li
 # Build corpus from inputs
 # -----------------------------
 def collect_documents(input_paths: List[Path]) -> List[Document]:
-    """
-    Walks given paths. Reads: .pdf, .html, .htm, .txt
-    Returns a list of LangChain Documents with metadata.
-    """
     docs: List[Document] = []
-    all_projects = []  # to enrich answers for "Demonstrates your AI projects" use-case
+    all_projects = []
 
     for p in input_paths:
         if p.is_dir():
@@ -151,7 +131,6 @@ def collect_documents(input_paths: List[Path]) -> List[Document]:
                                 metadata={"source": str(fp), "type": "portfolio/html", "chunk": i},
                             )
                         )
-                    # Add structured project cards as separate, dense docs
                     for proj in projects:
                         blob = f"Project: {proj.get('title','')}\nAbout: {proj.get('description','')}\nLink: {proj.get('href','')}"
                         docs.append(
@@ -174,18 +153,15 @@ def collect_documents(input_paths: List[Path]) -> List[Document]:
                             )
                         )
                 else:
-                    # skip other file types quietly
                     continue
             except Exception as e:
                 print(f"[WARN] Failed to parse {fp}: {e}")
 
-    # If we collected explicit projects, add a summary doc to help retrieval
     if all_projects:
-        lines = []
-        for proj in all_projects:
-            lines.append(
-                f"- {proj.get('title','')} :: {proj.get('description','')} :: {proj.get('href','')}"
-            )
+        lines = [
+            f"- {proj.get('title','')} :: {proj.get('description','')} :: {proj.get('href','')}"
+            for proj in all_projects
+        ]
         summary = "Kishan's Projects (from portfolio):\n" + "\n".join(lines)
         for i, chunk in enumerate(chunk_text(summary, chunk_size=1200, chunk_overlap=200)):
             docs.append(
@@ -202,7 +178,7 @@ def collect_documents(input_paths: List[Path]) -> List[Document]:
 # Vector store helpers
 # -----------------------------
 def build_or_load_index(index_dir: Path, inputs: List[Path]) -> FAISS:
-    embed = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    embed = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
     if index_dir.exists() and (index_dir / "index.faiss").exists():
         print(f"[OK] Loading existing index from {index_dir}")
@@ -279,16 +255,18 @@ def cmd_index(args):
 
 
 def cmd_chat(args):
-    # Load LLM
     llm = configure_gemini()
 
-    # Load / build index
     index_dir = Path(args.index_dir)
     inputs = [Path(p) for p in args.inputs] if args.inputs else []
-    store = build_or_load_index(index_dir, inputs) if inputs else FAISS.load_local(
-        str(index_dir),
-        HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L3-v2"),
-        allow_dangerous_deserialization=True,
+    store = (
+        build_or_load_index(index_dir, inputs)
+        if inputs
+        else FAISS.load_local(
+            str(index_dir),
+            GoogleGenerativeAIEmbeddings(model="models/embedding-001"),
+            allow_dangerous_deserialization=True,
+        )
     )
 
     retriever = store.as_retriever(search_kwargs={"k": 6})
@@ -344,4 +322,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -1,12 +1,12 @@
 import os
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from rag import build_or_load_index, make_chain, configure_gemini
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 # Load .env (Gemini key)
 load_dotenv()
@@ -28,7 +28,7 @@ INDEX_DIR = "rag_index"
 llm = configure_gemini()
 store = FAISS.load_local(
     INDEX_DIR,
-    HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L3-v2"),
+    GoogleGenerativeAIEmbeddings(model="models/embedding-001"),
     allow_dangerous_deserialization=True,
 )
 retriever = store.as_retriever(search_kwargs={"k": 6})
@@ -46,7 +46,6 @@ async def chat(req: ChatRequest):
     try:
         result = qa_chain.invoke({"query": req.message})
         
-        # if the result is a dict, get the "result" key
         if isinstance(result, dict):
             answer = result.get("result", str(result))
         else:
@@ -60,4 +59,3 @@ async def chat(req: ChatRequest):
 @app.get("/")
 async def root():
     return {"status": "Kishan RAG API running"}
-
