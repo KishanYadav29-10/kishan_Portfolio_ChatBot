@@ -45,15 +45,25 @@ class ChatResponse(BaseModel):
 async def chat(req: ChatRequest):
     try:
         result = qa_chain.invoke({"query": req.message})
-        
+
+        # Handle both return formats
         if isinstance(result, dict):
-            answer = result.get("result", str(result))
+            answer = (
+                result.get("result")
+                or result.get("answer")
+                or str(result)
+            )
         else:
             answer = str(result)
 
+        if not answer.strip():
+            answer = "⚠️ Sorry, I couldn’t find relevant info in my portfolio/resume."
+
         return ChatResponse(response=answer)
+
     except Exception as e:
         return ChatResponse(response=f"[Error] {str(e)}")
+
 
 
 @app.get("/")
