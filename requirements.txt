@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+python-dotenv
+pypdf
+beautifulsoup4
+tqdm
+google-generativeai
+langchain
+langchain-community
+langchain-core
+langchain-google-genai
+sentence-transformers
+faiss-cpu
+huggingface-hub
