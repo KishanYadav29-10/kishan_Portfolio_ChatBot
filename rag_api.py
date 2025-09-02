@@ -41,12 +41,13 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
 
+import traceback
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     try:
         result = qa_chain.invoke({"query": req.message})
 
-        # Handle both return formats
         if isinstance(result, dict):
             answer = (
                 result.get("result")
@@ -62,10 +63,13 @@ async def chat(req: ChatRequest):
         return ChatResponse(response=answer)
 
     except Exception as e:
+        traceback.print_exc()  # 👈 will show full error in Render logs
         return ChatResponse(response=f"[Error] {str(e)}")
+
 
 
 
 @app.get("/")
 async def root():
     return {"status": "Kishan RAG API running"}
+
