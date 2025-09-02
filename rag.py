@@ -287,7 +287,7 @@ def cmd_chat(args):
     inputs = [Path(p) for p in args.inputs] if args.inputs else []
     store = build_or_load_index(index_dir, inputs) if inputs else FAISS.load_local(
         str(index_dir),
-        HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2"),
+        HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L3-v2"),
         allow_dangerous_deserialization=True,
     )
 
@@ -344,3 +344,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
