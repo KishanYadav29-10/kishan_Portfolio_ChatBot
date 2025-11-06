@@ -178,7 +178,7 @@ def collect_documents(input_paths: List[Path]) -> List[Document]:
 # Vector store helpers
 # -----------------------------
 def build_or_load_index(index_dir: Path, inputs: List[Path]) -> FAISS:
-    embed = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    embed = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
 
     if index_dir.exists() and (index_dir / "index.faiss").exists():
         print(f"[OK] Loading existing index from {index_dir}")
@@ -322,3 +322,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
