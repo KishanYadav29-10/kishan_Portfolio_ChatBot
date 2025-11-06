@@ -31,7 +31,7 @@ def configure_gemini():
             "Missing GOOGLE_API_KEY. Put it in a .env file or export it in your shell."
         )
     genai.configure(api_key=api_key)
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
+    llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash", temperature=0.3)
     return llm
 
 
