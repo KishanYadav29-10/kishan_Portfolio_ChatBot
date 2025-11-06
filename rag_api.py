@@ -28,7 +28,7 @@ INDEX_DIR = "rag_index"
 llm = configure_gemini()
 store = FAISS.load_local(
     INDEX_DIR,
-    GoogleGenerativeAIEmbeddings(model="models/embedding-001"),
+    GoogleGenerativeAIEmbeddings(model="gemini-embedding-001"),
     allow_dangerous_deserialization=True,
 )
 retriever = store.as_retriever(search_kwargs={"k": 6})
@@ -72,4 +72,5 @@ async def chat(req: ChatRequest):
 @app.get("/")
 async def root():
     return {"status": "Kishan RAG API running"}
+
 
