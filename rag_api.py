@@ -4,11 +4,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from rag import build_or_load_index, make_chain, configure_gemini
+from rag import build_or_load_index, make_chain, configure_openai
 from langchain_community.vectorstores import FAISS
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 
-# Load .env (Gemini key)
+# Load .env (OpenAI key)
 load_dotenv()
 
 # Init FastAPI
@@ -25,10 +25,10 @@ app.add_middleware(
 
 # Load index + chain once
 INDEX_DIR = "rag_index"
-llm = configure_gemini()
+llm = configure_openai()
 store = FAISS.load_local(
     INDEX_DIR,
-    GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001"),
+    OpenAIEmbeddings(model="text-embedding-3-large"),
     allow_dangerous_deserialization=True,
 )
 retriever = store.as_retriever(search_kwargs={"k": 6})
@@ -63,8 +63,6 @@ async def chat(req: ChatRequest):
 
     except Exception as e:
         return ChatResponse(response=f"[Error] {str(e)}")
-
-
 
 @app.get("/")
 async def root():

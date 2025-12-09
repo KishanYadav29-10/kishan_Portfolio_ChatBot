@@ -6,316 +6,230 @@ from typing import List, Tuple
 from tqdm import tqdm
 
 from dotenv import load_dotenv
-import google.generativeai as genai
 
-# --- LangChain / RAG bits ---
-from langchain_core.prompts import PromptTemplate
+load_dotenv(dotenv_path="G:\\Data science and Ai\\Portfolio\\KIshan Personal Assitant\\.env")
+
+
+# LangChain modern imports
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
+from langchain_core.runnables import RunnablePassthrough
 from langchain_community.vectorstores import FAISS
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain.chains import RetrievalQA
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
-# --- Parsers ---
+# Parsers
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
 
 # -----------------------------
-# Utils: load env + configure LLM
+# Configure OpenAI
 # -----------------------------
-def configure_gemini():
+def configure_openai():
     load_dotenv()
-    api_key = os.getenv("GOOGLE_API_KEY", "").strip()
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError(
-            "Missing GOOGLE_API_KEY. Put it in a .env file or export it in your shell."
-        )
-    genai.configure(api_key=api_key)
-    llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash", temperature=0.3)
-    return llm
+        raise RuntimeError("Missing OPENAI_API_KEY")
+
+    return ChatOpenAI(
+        model="gpt-4.1-mini",
+        temperature=0.3
+    )
 
 
 # -----------------------------
-# Parsers for PDF and HTML
+# File parsers
 # -----------------------------
 def read_pdf_text(pdf_path: Path) -> str:
     reader = PdfReader(str(pdf_path))
-    texts = []
+    pages = []
     for page in reader.pages:
         try:
-            texts.append(page.extract_text() or "")
-        except Exception:
+            pages.append(page.extract_text() or "")
+        except:
             pass
-    return "\n".join(texts).strip()
+    return "\n".join(pages)
 
 
 def read_html_text(html_path: Path) -> Tuple[str, List[dict]]:
-    html = html_path.read_text(encoding="utf-8", errors="ignore")
-    soup = BeautifulSoup(html, "html.parser")
+    raw = html_path.read_text(encoding="utf-8", errors="ignore")
+    soup = BeautifulSoup(raw, "html.parser")
 
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
-    plain_text = " ".join(soup.stripped_strings)
 
-    project_cards = []
+    text = " ".join(soup.stripped_strings)
+
+    projects = []
     for card in soup.select(".apihu-port-single-service"):
-        title_tag = card.select_one(".apihu-port-single-service-title")
-        desc_tag = card.select_one(".apihu-port-single-service-text")
-        link_tag = card.select_one(".apihu-port-single-service-btn")
+        title = card.select_one(".apihu-port-single-service-title")
+        desc = card.select_one(".apihu-port-single-service-text")
+        link = card.select_one(".apihu-port-single-service-btn")
 
-        title = title_tag.get_text(strip=True) if title_tag else ""
-        desc = desc_tag.get_text(" ", strip=True) if desc_tag else ""
-        href = link_tag.get("href") if link_tag else None
+        projects.append({
+            "title": title.get_text(strip=True) if title else "",
+            "description": desc.get_text(strip=True) if desc else "",
+            "href": link.get("href") if link else None
+        })
 
-        if title or desc:
-            project_cards.append(
-                {"title": title, "description": desc, "href": href}
-            )
-
-    return plain_text, project_cards
+    return text, projects
 
 
 # -----------------------------
-# Chunking
+# Chunk text
 # -----------------------------
-def chunk_text(text: str, chunk_size: int = 900, chunk_overlap: int = 150) -> List[str]:
-    text = text.strip()
-    if not text:
-        return []
+def chunk_text(text: str, chunk_size=900, overlap=150):
     chunks = []
     start = 0
-    n = len(text)
-    while start < n:
-        end = min(start + chunk_size, n)
+    while start < len(text):
+        end = start + chunk_size
         chunks.append(text[start:end])
-        if end == n:
+        if end >= len(text):
             break
-        start = end - chunk_overlap
-        if start < 0:
-            start = 0
+        start = end - overlap
     return chunks
 
 
 # -----------------------------
-# Build corpus from inputs
+# Build documents
 # -----------------------------
-def collect_documents(input_paths: List[Path]) -> List[Document]:
-    docs: List[Document] = []
+def collect_documents(paths: list[Path]):
+    docs = []
     all_projects = []
 
-    for p in input_paths:
-        if p.is_dir():
-            file_list = sorted([fp for fp in p.rglob("*") if fp.is_file()])
-        else:
-            file_list = [p]
+    for p in paths:
+        files = list(p.rglob("*")) if p.is_dir() else [p]
 
-        for fp in tqdm(file_list, desc=f"Indexing {p}"):
+        for fp in files:
             ext = fp.suffix.lower()
-            try:
-                if ext == ".pdf":
-                    raw = read_pdf_text(fp)
-                    for i, chunk in enumerate(chunk_text(raw)):
-                        docs.append(
-                            Document(
-                                page_content=chunk,
-                                metadata={"source": str(fp), "type": "resume/pdf", "chunk": i},
-                            )
-                        )
-                elif ext in [".html", ".htm"]:
-                    raw, projects = read_html_text(fp)
-                    all_projects.extend(projects)
-                    for i, chunk in enumerate(chunk_text(raw)):
-                        docs.append(
-                            Document(
-                                page_content=chunk,
-                                metadata={"source": str(fp), "type": "portfolio/html", "chunk": i},
-                            )
-                        )
-                    for proj in projects:
-                        blob = f"Project: {proj.get('title','')}\nAbout: {proj.get('description','')}\nLink: {proj.get('href','')}"
-                        docs.append(
-                            Document(
-                                page_content=blob,
-                                metadata={
-                                    "source": str(fp),
-                                    "type": "portfolio/project_card",
-                                    "title": proj.get("title", ""),
-                                },
-                            )
-                        )
-                elif ext == ".txt":
-                    raw = fp.read_text(encoding="utf-8", errors="ignore")
-                    for i, chunk in enumerate(chunk_text(raw)):
-                        docs.append(
-                            Document(
-                                page_content=chunk,
-                                metadata={"source": str(fp), "type": "notes/txt", "chunk": i},
-                            )
-                        )
-                else:
-                    continue
-            except Exception as e:
-                print(f"[WARN] Failed to parse {fp}: {e}")
 
-    if all_projects:
-        lines = [
-            f"- {proj.get('title','')} :: {proj.get('description','')} :: {proj.get('href','')}"
-            for proj in all_projects
-        ]
-        summary = "Kishan's Projects (from portfolio):\n" + "\n".join(lines)
-        for i, chunk in enumerate(chunk_text(summary, chunk_size=1200, chunk_overlap=200)):
-            docs.append(
-                Document(
-                    page_content=chunk,
-                    metadata={"source": "portfolio_summary", "type": "portfolio/summary", "chunk": i},
-                )
-            )
+            if ext == ".pdf":
+                text = read_pdf_text(fp)
+                for i, chunk in enumerate(chunk_text(text)):
+                    docs.append(Document(page_content=chunk, metadata={"source": str(fp)}))
+
+            elif ext in [".html", ".htm"]:
+                text, projects = read_html_text(fp)
+                all_projects.extend(projects)
+
+                for i, chunk in enumerate(chunk_text(text)):
+                    docs.append(Document(page_content=chunk, metadata={"source": str(fp)}))
+
+                for proj in projects:
+                    blob = f"Project: {proj['title']}\n{proj['description']}\n{proj['href']}"
+                    docs.append(Document(page_content=blob, metadata={"source": str(fp)}))
+
+            elif ext == ".txt":
+                raw = fp.read_text(encoding="utf-8", errors="ignore")
+                for i, chunk in enumerate(chunk_text(raw)):
+                    docs.append(Document(page_content=chunk, metadata={"source": str(fp)}))
 
     return docs
 
 
 # -----------------------------
-# Vector store helpers
+# Build FAISS
 # -----------------------------
-def build_or_load_index(index_dir: Path, inputs: List[Path]) -> FAISS:
-    embed = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+def build_or_load_index(index_dir: Path, inputs: list[Path]):
+    embed = OpenAIEmbeddings(model="text-embedding-3-large")
 
-    if index_dir.exists() and (index_dir / "index.faiss").exists():
-        print(f"[OK] Loading existing index from {index_dir}")
+    if (index_dir / "index.faiss").exists():
+        print("[OK] Loading index")
         return FAISS.load_local(str(index_dir), embed, allow_dangerous_deserialization=True)
 
-    print("[*] Building FAISS index ...")
+    print("[*] Building FAISS index...")
+
     docs = collect_documents(inputs)
-    if not docs:
-        raise RuntimeError("No documents collected. Check your input paths.")
     store = FAISS.from_documents(docs, embed)
-    index_dir.mkdir(parents=True, exist_ok=True)
+
+    index_dir.mkdir(exist_ok=True)
     store.save_local(str(index_dir))
-    print(f"[OK] Saved index to {index_dir}")
+
+    print("[OK] Index saved")
     return store
 
 
 # -----------------------------
-# Prompt
+# Build RAG chain (Modern LCEL)
 # -----------------------------
-SYSTEM_STYLE = """You are Kishan Yadav's portfolio assistant.
-You ONLY answer questions about Kishan: his resume, skills, certifications, and projects.
-If the question is outside that scope, say you’re limited to Kishan-related topics.
+def make_chain(llm, retriever):
+    prompt = ChatPromptTemplate.from_messages([
+        ("system",
+         "You are Kishan Yadav’s portfolio assistant.\n"
+         "Use the following context to answer the user's question:\n\n"
+         "{context}\n\n"
+         "Guidelines:\n"
+         "- Only answer using Kishan’s resume, skills, certifications, and projects.\n"
+         "- If the answer is not in the context, say: 'I don’t have that detail in my portfolio yet.'"),
+        ("human", "{question}")
+    ])
 
-Tone: friendly, concise, helpful. Prefer bullet points and concrete details.
-
-When citing projects, include the project name and (if present) the GitHub link from context.
-If the answer isn’t in the context, say: “I don’t have that detail in my portfolio/resume yet.”"""
-
-RAG_TEMPLATE = """{system}
-
-Use the following context (resume + portfolio chunks) to answer the user:
-
-<context>
-{context}
-</context>
-
-User: {question}
-
-Guidelines:
-- If projects are referenced, name them exactly as in context.
-- When relevant, mention tools/stack (e.g., Python, Streamlit, LangChain, HuggingFace, OpenCV, MobileNetV2, Stable Diffusion, Mistral-7B, Ollama).
-- If context mentions dates or metrics (e.g., Jan–Jun 2025, 90%+ accuracy), include them.
-- If unsure or not found in context, say so briefly.
-
-Answer:"""
-
-
-def make_chain(llm: ChatGoogleGenerativeAI, retriever) -> RetrievalQA:
-    prompt = PromptTemplate(
-        template=RAG_TEMPLATE,
-        input_variables=["context", "question"],
-        partial_variables={"system": SYSTEM_STYLE},
+    chain = (
+        {"context": retriever, "question": RunnablePassthrough()}
+        | prompt
+        | llm
     )
-    chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=retriever,
-        chain_type_kwargs={"prompt": prompt},
-        return_source_documents=False,
-    )
+
     return chain
 
 
+
 # -----------------------------
-# CLI
+# CLI Commands
 # -----------------------------
 def cmd_index(args):
+    paths = [Path(x) for x in args.inputs]
     index_dir = Path(args.index_dir)
-    inputs = [Path(p) for p in args.inputs]
+
     if args.reset and index_dir.exists():
         shutil.rmtree(index_dir)
-        print(f"[OK] Cleared existing index at {index_dir}")
-    _ = build_or_load_index(index_dir, inputs)
+
+    build_or_load_index(index_dir, paths)
 
 
 def cmd_chat(args):
-    llm = configure_gemini()
+    llm = configure_openai()
 
     index_dir = Path(args.index_dir)
-    inputs = [Path(p) for p in args.inputs] if args.inputs else []
-    store = (
-        build_or_load_index(index_dir, inputs)
-        if inputs
-        else FAISS.load_local(
-            str(index_dir),
-            GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001"),
-            allow_dangerous_deserialization=True,
-        )
+    paths = [Path(x) for x in args.inputs] if args.inputs else []
+
+    store = build_or_load_index(index_dir, paths) if paths else FAISS.load_local(
+        str(index_dir),
+        OpenAIEmbeddings(model="text-embedding-3-large"),
+        allow_dangerous_deserialization=True
     )
 
     retriever = store.as_retriever(search_kwargs={"k": 6})
     chain = make_chain(llm, retriever)
 
-    print("\nKishan’s RAG Chatbot (Gemini) — ask about resume, skills, certifications, or projects.")
-    print("Type 'exit' to quit.\n")
+    print("\nKishan RAG Assistant (OpenAI)")
     while True:
-        q = input("You: ").strip()
-        if not q:
-            continue
-        if q.lower() in {"exit", "quit"}:
-            print("Bye!")
+        q = input("\nYou: ").strip()
+        if q.lower() in ("exit", "quit"):
             break
-        try:
-            ans = chain.run(q)
-        except Exception as e:
-            ans = f"[Error] {e}"
-        print(f"\nBot: {ans}\n")
+
+        out = chain.invoke(q)
+        print("\nBot:", out.content)
 
 
-def build_arg_parser():
-    p = argparse.ArgumentParser(description="Kishan's local RAG chatbot (Gemini).")
-    sub = p.add_subparsers(dest="cmd", required=True)
-
-    p_index = sub.add_parser("index", help="Build (or rebuild) FAISS index from inputs")
-    p_index.add_argument("--index-dir", default="rag_index", help="Directory for FAISS index")
-    p_index.add_argument("--reset", action="store_true", help="Delete existing index before building")
-    p_index.add_argument(
-        "inputs",
-        nargs="+",
-        help="Paths to resume/portfolio files or folders (pdf, html, txt). Example: ./assets ./portfolio.html",
-    )
-    p_index.set_defaults(func=cmd_index)
-
-    p_chat = sub.add_parser("chat", help="Start local CLI chat")
-    p_chat.add_argument("--index-dir", default="rag_index", help="Directory where FAISS index is stored")
-    p_chat.add_argument(
-        "--inputs",
-        nargs="*",
-        help="(Optional) if provided, will build/rebuild index first from these paths.",
-    )
-    p_chat.set_defaults(func=cmd_chat)
-
-    return p
-
-
+# -----------------------------
+# Main
+# -----------------------------
 def main():
-    parser = build_arg_parser()
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p1 = sub.add_parser("index")
+    p1.add_argument("inputs", nargs="+")
+    p1.add_argument("--index-dir", default="rag_index")
+    p1.add_argument("--reset", action="store_true")
+    p1.set_defaults(func=cmd_index)
+
+    p2 = sub.add_parser("chat")
+    p2.add_argument("--inputs", nargs="*")
+    p2.add_argument("--index-dir", default="rag_index")
+    p2.set_defaults(func=cmd_chat)
+
     args = parser.parse_args()
     args.func(args)
 
