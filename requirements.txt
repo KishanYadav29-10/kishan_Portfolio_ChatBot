@@ -4,26 +4,24 @@ pydantic==2.11.7
 pydantic-settings==2.10.1
 typing_extensions==4.14.1
 
-# --- LangChain Stack ---
+# --- LangChain Modern (Fully Compatible Set) ---
 langchain==0.3.27
 langchain-core==0.3.74
 langchain-community==0.3.27
-langchain-openai==0.1.4    # works perfectly with your version set
+langchain-openai==0.2.0   # <-- IMPORTANT: compatible with langchain-core 0.3.x
 faiss-cpu==1.12.0
 
-# --- OpenAI ---
+# --- OpenAI SDK ---
 openai==1.63.0
 
-# --- Web Framework (API backend) ---
+# --- API Backend ---
 fastapi==0.116.1
 uvicorn==0.35.0
 
-# --- Parsing & Utilities ---
+# --- Utilities ---
 beautifulsoup4==4.13.4
 pypdf==6.0.0
 tqdm==4.67.1
 requests==2.32.5
 anyio==4.10.0
-
-# --- Optional but useful ---
 numpy==2.3.2
