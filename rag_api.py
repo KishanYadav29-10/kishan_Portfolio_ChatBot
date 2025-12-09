@@ -14,10 +14,10 @@ load_dotenv()
 # Init FastAPI
 app = FastAPI(title="Kishan RAG API")
 
-# Allow frontend requests (GitHub Pages, localhost, etc.)
+# Allow frontend requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # change to ["https://your-github-pages-url"] for stricter
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,27 +34,37 @@ store = FAISS.load_local(
 retriever = store.as_retriever(search_kwargs={"k": 6})
 qa_chain = make_chain(llm, retriever)
 
+
 # Request/Response models
 class ChatRequest(BaseModel):
     message: str
 
+
 class ChatResponse(BaseModel):
     response: str
+
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     try:
-        result = qa_chain.invoke({"query": req.message})
+        # LCEL RAG chain: invoke with plain question
+        result = qa_chain.invoke(req.message)
 
-        # Handle both return formats
+        # LCEL RAG format usually returns: {"answer": "..."}
         if isinstance(result, dict):
             answer = (
-                result.get("result")
-                or result.get("answer")
+                result.get("answer")
+                or result.get("response")
+                or result.get("result")
                 or str(result)
             )
         else:
-            answer = str(result)
+            # If model returned a Message object, extract text
+            answer = getattr(result, "content", None) or str(result)
+
+        # Fallback if empty
+        if not isinstance(answer, str):
+            answer = str(answer)
 
         if not answer.strip():
             answer = "⚠️ Sorry, I couldn’t find relevant info in my portfolio/resume."
@@ -63,6 +73,7 @@ async def chat(req: ChatRequest):
 
     except Exception as e:
         return ChatResponse(response=f"[Error] {str(e)}")
+
 
 @app.get("/")
 async def root():
